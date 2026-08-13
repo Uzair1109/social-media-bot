@@ -20,7 +20,7 @@ def get_google_services():
     drive_service = build('drive', 'v3', credentials=creds)
     return gc, drive_service
 
-# --- 2. GENERATE IMAGE VIA REPLICATE API (FLUX.1) ---
+# --- 2. GENERATE AI IMAGE ---
 def generate_ai_image(prompt):
     api_token = os.environ["REPLICATE_API_TOKEN"]
     headers = {
@@ -44,7 +44,7 @@ def generate_ai_image(prompt):
     
     poll_url = prediction.get("urls", {}).get("get")
     if not poll_url:
-        print("❌ Error initiating image prediction:", prediction)
+        print("❌ Error starting prediction:", prediction)
         return None
 
     while prediction.get("status") not in ["succeeded", "failed"]:
@@ -83,81 +83,81 @@ def main():
     spreadsheet = gc.open("Master_Social_Media_Calendar")
     
     today_dt = datetime.datetime.now()
-    possible_today_formats = [
-        today_dt.strftime("%b %d %Y"),   # Aug 13 2026
-        today_dt.strftime("%b %d, %Y"),  # Aug 13, 2026
-        today_dt.strftime("%Y-%m-%d"),   # 2026-08-13
-        "TEST"                           # Manual test trigger
+    today_formats = [
+        today_dt.strftime("%b %d %Y").lower(),   # aug 13 2026
+        today_dt.strftime("%b %d, %Y").lower(),  # aug 13, 2026
+        today_dt.strftime("%Y-%m-%d").lower(),   # 2026-08-13
+        "test"
     ]
     
-    print(f"📅 Today's Date Search Formats: {possible_today_formats}")
-    
-    target_row = None
     target_sheet = None
     target_row_idx = None
+    target_row_data = None
 
+    # Search for matching row
     for sheet in spreadsheet.worksheets():
-        records = sheet.get_all_records()
-        print(f"\n📑 Checking sheet tab: '{sheet.title}' ({len(records)} rows)...")
-        
-        for row_idx, row in enumerate(records, start=2):
-            raw_date = str(row.get("Date", "")).strip()
-            status = str(row.get("Status", "")).strip()
+        all_values = sheet.get_all_values()
+        if len(all_values) < 2:
+            continue
             
-            # Match date or check if status isn't done
-            if (any(fmt.lower() in raw_date.lower() for fmt in possible_today_formats) or raw_date == "TEST") and status != "Done":
-                target_row = row
-                target_sheet = sheet
-                target_row_idx = row_idx
-                break
+        print(f"\n📑 Checking tab: '{sheet.title}' ({len(all_values)-1} rows)...")
         
-        if target_row:
+        for idx, row in enumerate(all_values[1:], start=2):
+            raw_date = str(row[0]).strip().lower() if len(row) > 0 else ""
+            status = str(row[7]).strip().lower() if len(row) > 7 else ""
+            
+            # Match date or fallback if status is pending
+            if any(fmt in raw_date for fmt in today_formats) and status != "done":
+                target_sheet = sheet
+                target_row_idx = idx
+                target_row_data = row
+                break
+                
+        if target_sheet:
             break
 
-    # FALLBACK TEST: If no row matches today's date, pick the first non-Done row to test!
-    if not target_row:
-        print("\n⚠️ No exact date match found for today. Running TEST on the first pending post...")
-        first_sheet = spreadsheet.worksheets()[0]
-        records = first_sheet.get_all_records()
-        for row_idx, row in enumerate(records, start=2):
-            if str(row.get("Status", "")).strip() != "Done":
-                target_row = row
-                target_sheet = first_sheet
-                target_row_idx = row_idx
+    # Fallback to first non-Done row if today's date wasn't found
+    if not target_sheet:
+        print("\n⚠️ No exact date match found for today. Picking first pending row to test...")
+        sheet = spreadsheet.worksheets()[0]
+        all_values = sheet.get_all_values()
+        for idx, row in enumerate(all_values[1:], start=2):
+            status = str(row[7]).strip().lower() if len(row) > 7 else ""
+            if status != "done":
+                target_sheet = sheet
+                target_row_idx = idx
+                target_row_data = row
                 break
 
-    if not target_row:
-        print("❌ No eligible posts found across any tabs.")
+    if not target_sheet or not target_row_data:
+        print("❌ No eligible rows found.")
         return
 
-    # Extract details
-    brand = target_row.get("Brand Name", target_sheet.title)
-    topic = target_row.get("Content Topic", "Asset")
-    prompt = target_row.get("Visual Direction & Hook", target_row.get("AI Image Prompt", ""))
-    folder_id = str(target_row.get("Folder ID", "")).strip()
+    # Map columns based on fixed position: A: Date, B: Brand, C: Topic, D: Format, E: Visual/Prompt, F: Caption, G: Folder ID, H: Status
+    brand = target_row_data[1] if len(target_row_data) > 1 else target_sheet.title
+    topic = target_row_data[2] if len(target_row_data) > 2 else "Asset"
+    prompt = target_row_data[4] if len(target_row_data) > 4 else "Professional photo"
+    folder_id = target_row_data[6].strip() if len(target_row_data) > 6 else ""
 
-    print(f"\n🎯 Selected Post for Processing:")
-    print(f"   • Tab: {target_sheet.title}")
+    print(f"\n🎯 Processing Post:")
     print(f"   • Brand: {brand}")
     print(f"   • Topic: {topic}")
     print(f"   • Folder ID: {folder_id}")
 
     if not folder_id or folder_id == "YOUR_DRIVE_FOLDER_ID":
-        print("❌ Invalid Folder ID. Please update Column G in Google Sheets with your real Drive Folder ID!")
+        print("❌ Error: Invalid Folder ID in Column G!")
         return
 
-    # Generate and Upload
+    # Generate Image & Upload
     image_path = generate_ai_image(prompt)
     if image_path:
         file_name = f"{today_dt.strftime('%Y-%m-%d')}_{brand.replace(' ', '_')}_{topic.replace(' ', '_')}.png"
         file_id = upload_to_drive(drive_service, image_path, folder_id, file_name)
-        print(f"🎉 SUCCESS! File uploaded to Google Drive. File ID: {file_id}")
+        print(f"🎉 SUCCESS! File uploaded to Drive. ID: {file_id}")
         
-        # Find column index for Status and update
-        headers = [str(h).strip() for h in target_sheet.row_values(1)]
-        status_col = headers.index("Status") + 1 if "Status" in headers else 8
-        target_sheet.update_cell(target_row_idx, status_col, "Done")
-        print(f"✅ Updated status to 'Done' in Row {target_row_idx} of sheet '{target_sheet.title}'.")
+        # Mark Status (Column H / 8) as Done
+        target_sheet.update_cell(target_row_idx, 8, "Done")
+        print(f"✅ Row {target_row_idx} status updated to 'Done'.")
 
 if __name__ == "__main__":
     main()
