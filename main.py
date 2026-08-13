@@ -80,7 +80,7 @@ def upload_to_drive(drive_service, file_path, folder_id, file_name):
 # --- 4. MAIN WORKFLOW ---
 def main():
     gc, drive_service = get_google_services()
-    spreadsheet = gc.open("Master_Social_Media_Calendar")
+    spreadsheet = gc.open("1MHpnZ5JJLSYbLVacK8U3Jwpa5ErvA4lC_dY2bEjKoe8")
     
     today_dt = datetime.datetime.now()
     today_formats = [
