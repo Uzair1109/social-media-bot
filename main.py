@@ -40,7 +40,7 @@ def generate_ai_image(prompt):
     poll_url = prediction.get("urls", {}).get("get")
     if not poll_url:
         print("Error starting prediction:", prediction)
-        return None, None
+        return None
 
     while prediction.get("status") not in ["succeeded", "failed"]:
         response = requests.get(poll_url, headers=headers)
@@ -49,18 +49,16 @@ def generate_ai_image(prompt):
     if prediction.get("status") == "succeeded":
         image_url = prediction["output"]
         print("AI Image generated successfully!")
-        return image_url, prediction
+        return image_url
     else:
         print("AI Image generation failed:", prediction)
-        return None, None
+        return None
 
 def main():
     gc = get_gspread_client()
     
     print("Searching for available spreadsheets...")
     available_sheets = gc.openall()
-    print(f"Found {len(available_sheets)} shared spreadsheet(s): {[s.title for s in available_sheets]}")
-    
     if not available_sheets:
         print("No spreadsheets found shared with this service account!")
         return
@@ -83,63 +81,46 @@ def main():
         today_dt.strftime("%Y-%m-%d").lower(),
         "test"
     ]
-    
-    target_sheet = None
-    target_row_idx = None
-    target_row_data = None
+
+    total_processed = 0
 
     for sheet in target_spreadsheet.worksheets():
         all_values = sheet.get_all_values()
         if len(all_values) < 2:
             continue
             
-        print(f"Checking tab: '{sheet.title}' ({len(all_values)-1} rows)...")
+        print(f"\nScanning tab: '{sheet.title}' ({len(all_values)-1} rows)...")
+        tab_processed = 0
         
         for idx, row in enumerate(all_values[1:], start=2):
             raw_date = str(row[0]).strip().lower() if len(row) > 0 else ""
             status = str(row[7]).strip().lower() if len(row) > 7 else ""
             
-            if any(fmt in raw_date for fmt in today_formats) and status != "done":
-                target_sheet = sheet
-                target_row_idx = idx
-                target_row_data = row
-                break
+            # Check for matching date or pending row
+            is_date_match = any(fmt in raw_date for fmt in today_formats)
+            
+            if (is_date_match or tab_processed == 0) and status != "done":
+                brand = row[1] if len(row) > 1 and row[1].strip() else sheet.title
+                topic = row[2] if len(row) > 2 else "Asset"
+                prompt = row[4] if len(row) > 4 else "Professional photo"
                 
-        if target_sheet:
-            break
-
-    if not target_sheet:
-        print("No exact date match found for today. Picking first pending row to test...")
-        for sheet in target_spreadsheet.worksheets():
-            all_values = sheet.get_all_values()
-            for idx, row in enumerate(all_values[1:], start=2):
-                status = str(row[7]).strip().lower() if len(row) > 7 else ""
-                if status != "done":
-                    target_sheet = sheet
-                    target_row_idx = idx
-                    target_row_data = row
-                    break
-            if target_sheet:
+                print(f"\nProcessing Post for [{sheet.title}]:")
+                print(f"Row: {idx}")
+                print(f"Brand: {brand}")
+                print(f"Topic: {topic}")
+                
+                image_url = generate_ai_image(prompt)
+                if image_url:
+                    print(f"Generated Image URL: {image_url}")
+                    sheet.update_cell(idx, 7, image_url)
+                    sheet.update_cell(idx, 8, "Done")
+                    print(f"Row {idx} in '{sheet.title}' marked as 'Done'.")
+                    
+                tab_processed += 1
+                total_processed += 1
                 break
 
-    if not target_sheet or not target_row_data:
-        print("No eligible rows found.")
-        return
-
-    brand = target_row_data[1] if len(target_row_data) > 1 else target_sheet.title
-    topic = target_row_data[2] if len(target_row_data) > 2 else "Asset"
-    prompt = target_row_data[4] if len(target_row_data) > 4 else "Professional photo"
-
-    print("Processing Post:")
-    print(f"Brand: {brand}")
-    print(f"Topic: {topic}")
-
-    image_url, prediction_data = generate_ai_image(prompt)
-    if image_url:
-        print(f"Generated Image URL: {image_url}")
-        target_sheet.update_cell(target_row_idx, 7, image_url)
-        target_sheet.update_cell(target_row_idx, 8, "Done")
-        print(f"Google Sheet updated successfully! Row {target_row_idx} is marked as 'Done'.")
+    print(f"\nExecution finished. Total assets processed: {total_processed}")
 
 if __name__ == "__main__":
     main()
