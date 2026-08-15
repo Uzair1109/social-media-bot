@@ -63,17 +63,18 @@ def generate_ai_image(prompt):
         print("❌ AI Image generation failed:", prediction)
         return None
 
-# --- 3. UPLOAD TO GOOGLE DRIVE ---
+#
 def upload_to_drive(drive_service, file_path, folder_id, file_name):
     file_metadata = {
         'name': file_name,
         'parents': [folder_id]
     }
-    media = MediaFileUpload(file_path, mimetype='image/png')
+    media = MediaFileUpload(file_path, mimetype='image/png', resumable=True)
     uploaded_file = drive_service.files().create(
         body=file_metadata,
         media_body=media,
-        fields='id'
+        fields='id',
+        supportsAllDrives=True
     ).execute()
     return uploaded_file.get('id')
 
