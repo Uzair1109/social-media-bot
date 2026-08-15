@@ -72,7 +72,7 @@ def main():
     if not target_spreadsheet:
         target_spreadsheet = available_sheets[0]
         
-    print(f"Successfully connected to: '{target_spreadsheet.title}'")
+    print(f"Connected to spreadsheet: '{target_spreadsheet.title}'")
 
     today_dt = datetime.datetime.now()
     today_formats = [
@@ -84,43 +84,68 @@ def main():
 
     total_processed = 0
 
+    # Explicitly iterate over all tabs in the workbook
     for sheet in target_spreadsheet.worksheets():
+        tab_name = sheet.title.strip()
         all_values = sheet.get_all_values()
+        
+        print(f"\n==========================================")
+        print(f"Checking Worksheet: '{tab_name}' (Total Rows: {len(all_values)})")
+        print(f"==========================================")
+        
         if len(all_values) < 2:
+            print(f"Skipping tab '{tab_name}' because it has no data rows.")
             continue
             
-        print(f"\nScanning tab: '{sheet.title}' ({len(all_values)-1} rows)...")
-        tab_processed = 0
+        row_to_process = None
+        row_index_to_process = None
         
+        # 1. Look for today's date first
         for idx, row in enumerate(all_values[1:], start=2):
             raw_date = str(row[0]).strip().lower() if len(row) > 0 else ""
             status = str(row[7]).strip().lower() if len(row) > 7 else ""
             
-            # Check for matching date or pending row
-            is_date_match = any(fmt in raw_date for fmt in today_formats)
-            
-            if (is_date_match or tab_processed == 0) and status != "done":
-                brand = row[1] if len(row) > 1 and row[1].strip() else sheet.title
-                topic = row[2] if len(row) > 2 else "Asset"
-                prompt = row[4] if len(row) > 4 else "Professional photo"
-                
-                print(f"\nProcessing Post for [{sheet.title}]:")
-                print(f"Row: {idx}")
-                print(f"Brand: {brand}")
-                print(f"Topic: {topic}")
-                
-                image_url = generate_ai_image(prompt)
-                if image_url:
-                    print(f"Generated Image URL: {image_url}")
-                    sheet.update_cell(idx, 7, image_url)
-                    sheet.update_cell(idx, 8, "Done")
-                    print(f"Row {idx} in '{sheet.title}' marked as 'Done'.")
-                    
-                tab_processed += 1
-                total_processed += 1
+            if any(fmt in raw_date for fmt in today_formats) and status != "done":
+                row_to_process = row
+                row_index_to_process = idx
+                print(f"Found match by date at row {idx}")
                 break
+                
+        # 2. If no exact date match, pick the first row that is not 'Done'
+        if not row_to_process:
+            for idx, row in enumerate(all_values[1:], start=2):
+                status = str(row[7]).strip().lower() if len(row) > 7 else ""
+                if status != "done" and len(row) > 4 and row[4].strip() != "":
+                    row_to_process = row
+                    row_index_to_process = idx
+                    print(f"Found pending row at row {idx}")
+                    break
 
-    print(f"\nExecution finished. Total assets processed: {total_processed}")
+        if not row_to_process:
+            print(f"No pending rows found in tab '{tab_name}'.")
+            continue
+
+        brand = row_to_process[1] if len(row_to_process) > 1 and row_to_process[1].strip() else tab_name
+        topic = row_to_process[2] if len(row_to_process) > 2 else "Asset"
+        prompt = row_to_process[4] if len(row_to_process) > 4 else "Professional product photo"
+
+        print(f"Processing post for Brand: {brand}")
+        print(f"Row Index: {row_index_to_process}")
+        print(f"Topic: {topic}")
+
+        image_url = generate_ai_image(prompt)
+        if image_url:
+            print(f"Generated Image URL: {image_url}")
+            sheet.update_cell(row_index_to_process, 7, image_url)
+            sheet.update_cell(row_index_to_process, 8, "Done")
+            print(f"Updated row {row_index_to_process} in '{tab_name}' to Done.")
+            total_processed += 1
+        else:
+            print(f"Skipping sheet update for '{tab_name}' due to generation error.")
+
+    print(f"\n==========================================")
+    print(f"Run completed. Total tabs processed: {total_processed}")
+    print(f"==========================================")
 
 if __name__ == "__main__":
     main()
