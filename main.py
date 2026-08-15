@@ -80,13 +80,32 @@ def upload_to_drive(drive_service, file_path, folder_id, file_name):
 # --- 4. MAIN WORKFLOW ---
 def main():
     gc, drive_service = get_google_services()
-    spreadsheet = gc.open_by_url("https://docs.google.com/spreadsheets/d/1MHpnZ5JJLSYbLVack8U3Jwpa5ErvA4IC_dY2bEjKoe8/edit")
     
+    print("🔍 Searching for available spreadsheets...")
+    available_sheets = gc.openall()
+    print(f"Found {len(available_sheets)} shared spreadsheet(s): {[s.title for s in available_sheets]}")
+    
+    if not available_sheets:
+        print("❌ No spreadsheets found shared with this service account!")
+        return
+        
+    # Match by title or fallback to the first available shared spreadsheet
+    target_spreadsheet = None
+    for s in available_sheets:
+        if "Master_Social_Media_Calendar" in s.title or "Social" in s.title:
+            target_spreadsheet = s
+            break
+            
+    if not target_spreadsheet:
+        target_spreadsheet = available_sheets[0]
+        
+    print(f"✅ Successfully connected to: '{target_spreadsheet.title}'")
+
     today_dt = datetime.datetime.now()
     today_formats = [
-        today_dt.strftime("%b %d %Y").lower(),   # aug 13 2026
-        today_dt.strftime("%b %d, %Y").lower(),  # aug 13, 2026
-        today_dt.strftime("%Y-%m-%d").lower(),   # 2026-08-13
+        today_dt.strftime("%b %d %Y").lower(),   # aug 15 2026
+        today_dt.strftime("%b %d, %Y").lower(),  # aug 15, 2026
+        today_dt.strftime("%Y-%m-%d").lower(),   # 2026-08-15
         "test"
     ]
     
@@ -94,8 +113,7 @@ def main():
     target_row_idx = None
     target_row_data = None
 
-    # Search for matching row
-    for sheet in spreadsheet.worksheets():
+    for sheet in target_spreadsheet.worksheets():
         all_values = sheet.get_all_values()
         if len(all_values) < 2:
             continue
@@ -106,7 +124,6 @@ def main():
             raw_date = str(row[0]).strip().lower() if len(row) > 0 else ""
             status = str(row[7]).strip().lower() if len(row) > 7 else ""
             
-            # Match date or fallback if status is pending
             if any(fmt in raw_date for fmt in today_formats) and status != "done":
                 target_sheet = sheet
                 target_row_idx = idx
@@ -116,24 +133,25 @@ def main():
         if target_sheet:
             break
 
-    # Fallback to first non-Done row if today's date wasn't found
+    # Fallback to first non-Done row across tabs
     if not target_sheet:
         print("\n⚠️ No exact date match found for today. Picking first pending row to test...")
-        sheet = spreadsheet.worksheets()[0]
-        all_values = sheet.get_all_values()
-        for idx, row in enumerate(all_values[1:], start=2):
-            status = str(row[7]).strip().lower() if len(row) > 7 else ""
-            if status != "done":
-                target_sheet = sheet
-                target_row_idx = idx
-                target_row_data = row
+        for sheet in target_spreadsheet.worksheets():
+            all_values = sheet.get_all_values()
+            for idx, row in enumerate(all_values[1:], start=2):
+                status = str(row[7]).strip().lower() if len(row) > 7 else ""
+                if status != "done":
+                    target_sheet = sheet
+                    target_row_idx = idx
+                    target_row_data = row
+                    break
+            if target_sheet:
                 break
 
     if not target_sheet or not target_row_data:
         print("❌ No eligible rows found.")
         return
 
-    # Map columns based on fixed position: A: Date, B: Brand, C: Topic, D: Format, E: Visual/Prompt, F: Caption, G: Folder ID, H: Status
     brand = target_row_data[1] if len(target_row_data) > 1 else target_sheet.title
     topic = target_row_data[2] if len(target_row_data) > 2 else "Asset"
     prompt = target_row_data[4] if len(target_row_data) > 4 else "Professional photo"
@@ -155,7 +173,6 @@ def main():
         file_id = upload_to_drive(drive_service, image_path, folder_id, file_name)
         print(f"🎉 SUCCESS! File uploaded to Drive. ID: {file_id}")
         
-        # Mark Status (Column H / 8) as Done
         target_sheet.update_cell(target_row_idx, 8, "Done")
         print(f"✅ Row {target_row_idx} status updated to 'Done'.")
 
