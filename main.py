@@ -74,18 +74,9 @@ def main():
         
     print(f"Connected to spreadsheet: '{target_spreadsheet.title}'")
 
-    today_dt = datetime.datetime.now()
-    today_formats = [
-        today_dt.strftime("%b %d %Y").lower(),
-        today_dt.strftime("%b %d, %Y").lower(),
-        today_dt.strftime("%Y-%m-%d").lower(),
-        "test"
-    ]
-
     total_processed = 0
-    worksheets = target_spreadsheet.worksheets()
 
-    for sheet in worksheets:
+    for sheet in target_spreadsheet.worksheets():
         tab_name = sheet.title.strip()
         all_values = sheet.get_all_values()
         
@@ -94,66 +85,44 @@ def main():
         print("=" * 50)
         
         if len(all_values) < 2:
-            print(f"Skipping tab '{tab_name}' (insufficient rows).")
+            print(f"Skipping empty tab '{tab_name}'.")
             continue
-
-        header = [h.strip().lower() for h in all_values[0]]
-        
-        # Column indexes (1-based for gspread updates)
-        date_col = next((i + 1 for i, h in enumerate(header) if "date" in h), 1)
-        brand_col = next((i + 1 for i, h in enumerate(header) if "brand" in h), 2)
-        topic_col = next((i + 1 for i, h in enumerate(header) if "topic" in h), 3)
-        prompt_col = next((i + 1 for i, h in enumerate(header) if "prompt" in h or "direction" in h or "visual" in h), 5)
-        link_col = next((i + 1 for i, h in enumerate(header) if "link" in h or "url" in h or "folder" in h or "asset" in h), 7)
-        status_col = next((i + 1 for i, h in enumerate(header) if "status" in h), 8)
 
         target_row_idx = None
         target_row_data = None
 
-        # Pass 1: Try matching today's date
+        # Find the first row where status is not 'done'
         for idx, row in enumerate(all_values[1:], start=2):
-            raw_date = str(row[date_col - 1]).strip().lower() if len(row) >= date_col else ""
-            status = str(row[status_col - 1]).strip().lower() if len(row) >= status_col else ""
+            status = str(row[7]).strip().lower() if len(row) > 7 else ""
+            prompt_val = str(row[4]).strip() if len(row) > 4 else ""
             
-            if any(fmt in raw_date for fmt in today_formats) and status != "done":
+            if status != "done" and len(prompt_val) > 0:
                 target_row_idx = idx
                 target_row_data = row
-                print(f"Found matching date in row {idx}")
                 break
 
-        # Pass 2: Fallback to first non-Done row with a prompt
-        if not target_row_idx:
-            for idx, row in enumerate(all_values[1:], start=2):
-                status = str(row[status_col - 1]).strip().lower() if len(row) >= status_col else ""
-                has_prompt = len(row) >= prompt_col and str(row[prompt_col - 1]).strip() != ""
-                if status != "done" and has_prompt:
-                    target_row_idx = idx
-                    target_row_data = row
-                    print(f"Found pending row {idx}")
-                    break
-
         if not target_row_idx or not target_row_data:
-            print(f"No pending rows to process in tab '{tab_name}'.")
+            print(f"No pending rows found in tab '{tab_name}'.")
             continue
 
-        brand = str(target_row_data[brand_col - 1]).strip() if len(target_row_data) >= brand_col and str(target_row_data[brand_col - 1]).strip() else tab_name
-        topic = str(target_row_data[topic_col - 1]).strip() if len(target_row_data) >= topic_col else "Asset"
-        prompt = str(target_row_data[prompt_col - 1]).strip() if len(target_row_data) >= prompt_col else "Professional commercial photo"
+        brand = target_row_data[1].strip() if len(target_row_data) > 1 and target_row_data[1].strip() else tab_name
+        topic = target_row_data[2].strip() if len(target_row_data) > 2 else "Asset"
+        prompt = target_row_data[4].strip() if len(target_row_data) > 4 else "Professional photo"
 
-        print(f"Processing row {target_row_idx} for Brand '{brand}': {topic}")
+        print(f"Generating for [{tab_name}] - Row {target_row_idx}: {topic}")
         image_url = generate_ai_image(prompt)
         
         if image_url:
             print(f"Generated Image URL: {image_url}")
-            sheet.update_cell(target_row_idx, link_col, image_url)
-            sheet.update_cell(target_row_idx, status_col, "Done")
-            print(f"Successfully marked row {target_row_idx} in '{tab_name}' as Done.")
+            sheet.update_cell(target_row_idx, 7, image_url)
+            sheet.update_cell(target_row_idx, 8, "Done")
+            print(f"Updated row {target_row_idx} in '{tab_name}' to Done.")
             total_processed += 1
         else:
             print(f"Failed to generate asset for tab '{tab_name}'.")
 
     print("\n" + "=" * 50)
-    print(f"Workflow Finished! Total assets generated across all tabs: {total_processed}")
+    print(f"Workflow Finished! Total assets generated: {total_processed}")
     print("=" * 50)
 
 if __name__ == "__main__":
