@@ -74,24 +74,29 @@ def main():
         
     print(f"Connected to spreadsheet: '{target_spreadsheet.title}'")
 
+    target_tab_names = ["Nirvan Exports", "Eclat by NRJ", "Flairlytics"]
     total_processed = 0
 
     for sheet in target_spreadsheet.worksheets():
         tab_name = sheet.title.strip()
-        all_values = sheet.get_all_values()
         
+        # Match against our intended tabs
+        if not any(target.lower() in tab_name.lower() for target in target_tab_names):
+            continue
+
+        all_values = sheet.get_all_values()
         print("\n" + "=" * 50)
-        print(f"Scanning Tab: '{tab_name}' ({len(all_values)} total rows)")
+        print(f"Processing Tab: '{tab_name}' ({len(all_values)} total rows)")
         print("=" * 50)
         
         if len(all_values) < 2:
-            print(f"Skipping empty tab '{tab_name}'.")
+            print(f"Skipping tab '{tab_name}' - not enough rows.")
             continue
 
         target_row_idx = None
         target_row_data = None
 
-        # Find the first row where status is not 'done'
+        # Look for the first row that is NOT 'Done'
         for idx, row in enumerate(all_values[1:], start=2):
             status = str(row[7]).strip().lower() if len(row) > 7 else ""
             prompt_val = str(row[4]).strip() if len(row) > 4 else ""
@@ -102,12 +107,12 @@ def main():
                 break
 
         if not target_row_idx or not target_row_data:
-            print(f"No pending rows found in tab '{tab_name}'.")
+            print(f"No pending rows found for '{tab_name}'.")
             continue
 
-        brand = target_row_data[1].strip() if len(target_row_data) > 1 and target_row_data[1].strip() else tab_name
-        topic = target_row_data[2].strip() if len(target_row_data) > 2 else "Asset"
-        prompt = target_row_data[4].strip() if len(target_row_data) > 4 else "Professional photo"
+        brand = str(target_row_data[1]).strip() if len(target_row_data) > 1 and target_row_data[1].strip() else tab_name
+        topic = str(target_row_data[2]).strip() if len(target_row_data) > 2 else "Asset"
+        prompt = str(target_row_data[4]).strip() if len(target_row_data) > 4 else "Professional product photo"
 
         print(f"Generating for [{tab_name}] - Row {target_row_idx}: {topic}")
         image_url = generate_ai_image(prompt)
@@ -122,7 +127,7 @@ def main():
             print(f"Failed to generate asset for tab '{tab_name}'.")
 
     print("\n" + "=" * 50)
-    print(f"Workflow Finished! Total assets generated: {total_processed}")
+    print(f"Workflow Complete. Total assets generated: {total_processed}")
     print("=" * 50)
 
 if __name__ == "__main__":
