@@ -2,10 +2,12 @@ import datetime
 import os
 import json
 import time
-import requests
+import io
 import gspread
 from google.oauth2.service_account import Credentials
-from openai import OpenAI
+from google import genai
+from google.genai import types
+from PIL import Image
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -18,37 +20,39 @@ def get_services():
     creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return gc, client
 
 def generate_and_save_image(client, prompt, file_name):
-    print(f"Calling OpenAI DALL-E 3 for prompt: '{prompt[:70]}...'")
+    print(f"Calling Google Imagen 3 with prompt: '{prompt[:75]}...'")
     try:
-        response = client.images.generate(
-            model="dall-e-3",
+        result = client.models.generate_images(
+            model='imagen-3.0-generate-002',
             prompt=prompt,
-            size="1024x1024",
-            quality="hd",
-            n=1
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="1:1",
+                output_mime_type="image/png"
+            )
         )
-        temp_url = response.data[0].url
         
         os.makedirs("assets", exist_ok=True)
         local_path = os.path.join("assets", file_name)
-        
-        img_data = requests.get(temp_url, timeout=60).content
-        with open(local_path, "wb") as f:
-            f.write(img_data)
-            
+
+        for generated_image in result.generated_images:
+            image = Image.open(io.BytesIO(generated_image.image.image_bytes))
+            image.save(local_path)
+            break
+
         permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
-        print(f"Asset successfully saved locally -> {local_path}")
+        print(f"Image saved locally: {local_path}")
         return permanent_github_url
     except Exception as e:
-        print(f"OpenAI Generation Error: {e}")
+        print(f"Gemini/Imagen Generation Error: {e}")
         return None
 
 def main():
-    gc, openai_client = get_services()
+    gc, gemini_client = get_services()
     
     available_sheets = gc.openall()
     if not available_sheets:
@@ -68,7 +72,6 @@ def main():
 
     total_processed = 0
 
-    # Process every worksheet in the spreadsheet
     for sheet in target_spreadsheet.worksheets():
         tab_name = sheet.title.strip()
         all_values = sheet.get_all_values()
@@ -78,10 +81,8 @@ def main():
         print("=" * 55)
         
         if len(all_values) < 2:
-            print(f"Skipping tab '{tab_name}' (empty or header only).")
             continue
 
-        # Map column positions dynamically based on row 1 headers
         header_row = [str(h).strip().lower() for h in all_values[0]]
         
         brand_col = 2
@@ -105,7 +106,6 @@ def main():
         target_row_idx = None
         target_row_data = None
 
-        # Look for the first row where status is not 'done'
         for idx, row in enumerate(all_values[1:], start=2):
             status_val = str(row[status_col - 1]).strip().lower() if len(row) >= status_col else ""
             prompt_val = str(row[prompt_col - 1]).strip() if len(row) >= prompt_col else ""
@@ -129,12 +129,12 @@ def main():
         file_name = f"{timestamp}_{clean_brand}_{clean_topic}.png"
 
         print(f"Processing Tab: '{tab_name}' | Row {target_row_idx} | Topic: '{topic}'")
-        permanent_url = generate_and_save_image(openai_client, prompt, file_name)
+        permanent_url = generate_and_save_image(gemini_client, prompt, file_name)
         
         if permanent_url:
             sheet.update_cell(target_row_idx, link_col, permanent_url)
             sheet.update_cell(target_row_idx, status_col, "Done")
-            print(f"Updated row {target_row_idx} in '{tab_name}' to Done with link.")
+            print(f"Updated row {target_row_idx} in '{tab_name}' to Done.")
             total_processed += 1
             time.sleep(2)
         else:
