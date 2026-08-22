@@ -1,61 +1,42 @@
 import datetime
 import os
 import json
-import requests
+import time
 import gspread
 from google.oauth2.service_account import Credentials
+from openai import OpenAI
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-def get_gspread_client():
+def get_services():
     creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    return gc
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    return gc, client
 
-def generate_ai_image(prompt):
-    api_token = os.environ["REPLICATE_API_TOKEN"]
-    headers = {
-        "Authorization": f"Token {api_token}",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "version": "black-forest-labs/flux-1.1-pro",
-        "input": {
-            "prompt": prompt,
-            "aspect_ratio": "1:1",
-            "output_format": "png",
-            "output_quality": 95
-        }
-    }
-    
-    print(f"Sending prompt to Flux AI: '{prompt[:60]}...'")
-    response = requests.post("https://api.replicate.com/v1/predictions", headers=headers, json=data)
-    prediction = response.json()
-    
-    poll_url = prediction.get("urls", {}).get("get")
-    if not poll_url:
-        print("Error starting prediction:", prediction)
-        return None
-
-    while prediction.get("status") not in ["succeeded", "failed"]:
-        response = requests.get(poll_url, headers=headers)
-        prediction = response.json()
-        
-    if prediction.get("status") == "succeeded":
-        image_url = prediction["output"]
+def generate_dalle_image(client, prompt):
+    print(f"Sending prompt to OpenAI DALL-E 3: '{prompt[:70]}...'")
+    try:
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="hd",
+            n=1
+        )
+        image_url = response.data[0].url
         print("AI Image generated successfully!")
         return image_url
-    else:
-        print("AI Image generation failed:", prediction)
+    except Exception as e:
+        print(f"OpenAI Generation Error: {e}")
         return None
 
 def main():
-    gc = get_gspread_client()
+    gc, openai_client = get_services()
     
     print("Searching for available spreadsheets...")
     available_sheets = gc.openall()
@@ -77,26 +58,27 @@ def main():
     target_tab_names = ["Nirvan Exports", "Eclat by NRJ", "Flairlytics"]
     total_processed = 0
 
-    for sheet in target_spreadsheet.worksheets():
-        tab_name = sheet.title.strip()
-        
-        # Match against our intended tabs
-        if not any(target.lower() in tab_name.lower() for target in target_tab_names):
+    for tab_target in target_tab_names:
+        try:
+            sheet = target_spreadsheet.worksheet(tab_target)
+        except Exception as e:
+            print(f"Could not open tab '{tab_target}': {e}")
             continue
 
+        tab_name = sheet.title
         all_values = sheet.get_all_values()
+        
         print("\n" + "=" * 50)
-        print(f"Processing Tab: '{tab_name}' ({len(all_values)} total rows)")
+        print(f"Processing Tab: '{tab_name}' ({len(all_values)} rows)")
         print("=" * 50)
         
         if len(all_values) < 2:
-            print(f"Skipping tab '{tab_name}' - not enough rows.")
+            print(f"Skipping tab '{tab_name}' - insufficient rows.")
             continue
 
         target_row_idx = None
         target_row_data = None
 
-        # Look for the first row that is NOT 'Done'
         for idx, row in enumerate(all_values[1:], start=2):
             status = str(row[7]).strip().lower() if len(row) > 7 else ""
             prompt_val = str(row[4]).strip() if len(row) > 4 else ""
@@ -112,22 +94,20 @@ def main():
 
         brand = str(target_row_data[1]).strip() if len(target_row_data) > 1 and target_row_data[1].strip() else tab_name
         topic = str(target_row_data[2]).strip() if len(target_row_data) > 2 else "Asset"
-        prompt = str(target_row_data[4]).strip() if len(target_row_data) > 4 else "Professional product photo"
+        prompt = str(target_row_data[4]).strip() if len(target_row_data) > 4 else "Professional photo"
 
         print(f"Generating for [{tab_name}] - Row {target_row_idx}: {topic}")
-        image_url = generate_ai_image(prompt)
+        image_url = generate_dalle_image(openai_client, prompt)
         
         if image_url:
-            print(f"Generated Image URL: {image_url}")
             sheet.update_cell(target_row_idx, 7, image_url)
             sheet.update_cell(target_row_idx, 8, "Done")
             print(f"Updated row {target_row_idx} in '{tab_name}' to Done.")
             total_processed += 1
-        else:
-            print(f"Failed to generate asset for tab '{tab_name}'.")
+            time.sleep(2)
 
     print("\n" + "=" * 50)
-    print(f"Workflow Complete. Total assets generated: {total_processed}")
+    print(f"Workflow Finished! Total assets generated: {total_processed}")
     print("=" * 50)
 
 if __name__ == "__main__":
