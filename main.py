@@ -2,6 +2,7 @@ import datetime
 import os
 import json
 import time
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
 from openai import OpenAI
@@ -11,6 +12,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+REPO_NAME = "Uzair1109/social-media-bot"
+
 def get_services():
     creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
@@ -18,7 +21,7 @@ def get_services():
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     return gc, client
 
-def generate_dalle_image(client, prompt):
+def generate_and_save_image(client, prompt, file_name):
     print(f"Sending prompt to OpenAI DALL-E 3: '{prompt[:70]}...'")
     try:
         response = client.images.generate(
@@ -28,9 +31,18 @@ def generate_dalle_image(client, prompt):
             quality="hd",
             n=1
         )
-        image_url = response.data[0].url
-        print("AI Image generated successfully!")
-        return image_url
+        temp_url = response.data[0].url
+        
+        os.makedirs("assets", exist_ok=True)
+        local_path = os.path.join("assets", file_name)
+        
+        img_data = requests.get(temp_url).content
+        with open(local_path, "wb") as f:
+            f.write(img_data)
+            
+        permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
+        print(f"Saved locally to {local_path}")
+        return permanent_github_url
     except Exception as e:
         print(f"OpenAI Generation Error: {e}")
         return None
@@ -38,7 +50,6 @@ def generate_dalle_image(client, prompt):
 def main():
     gc, openai_client = get_services()
     
-    print("Searching for available spreadsheets...")
     available_sheets = gc.openall()
     if not available_sheets:
         print("No spreadsheets found shared with this service account!")
@@ -73,7 +84,6 @@ def main():
         print("=" * 50)
         
         if len(all_values) < 2:
-            print(f"Skipping tab '{tab_name}' - insufficient rows.")
             continue
 
         target_row_idx = None
@@ -96,11 +106,16 @@ def main():
         topic = str(target_row_data[2]).strip() if len(target_row_data) > 2 else "Asset"
         prompt = str(target_row_data[4]).strip() if len(target_row_data) > 4 else "Professional photo"
 
+        clean_topic = "".join(c for c in topic if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
+        clean_brand = "".join(c for c in brand if c.isalnum() or c in (' ', '_')).rstrip().replace(' ', '_')
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_name = f"{timestamp}_{clean_brand}_{clean_topic}.png"
+
         print(f"Generating for [{tab_name}] - Row {target_row_idx}: {topic}")
-        image_url = generate_dalle_image(openai_client, prompt)
+        permanent_url = generate_and_save_image(openai_client, prompt, file_name)
         
-        if image_url:
-            sheet.update_cell(target_row_idx, 7, image_url)
+        if permanent_url:
+            sheet.update_cell(target_row_idx, 7, permanent_url)
             sheet.update_cell(target_row_idx, 8, "Done")
             print(f"Updated row {target_row_idx} in '{tab_name}' to Done.")
             total_processed += 1
