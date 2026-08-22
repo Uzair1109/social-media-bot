@@ -24,36 +24,53 @@ def get_services():
     return gc, client
 
 def generate_and_save_image(client, prompt, file_name):
-    print(f"Calling Google Imagen 3 with prompt: '{prompt[:75]}...'")
-    try:
-        result = client.models.generate_images(
-            model='imagen-3.0-generate-002',
-            prompt=prompt,
-            config=types.GenerateImagesConfig(
-                number_of_images=1,
-                aspect_ratio="1:1",
-                output_mime_type="image/png"
+    # Try all standard Imagen model names supported on Gemini API
+    candidate_models = [
+        "imagen-3.0-generate-002",
+        "imagen-3.0-fast-generate-001",
+        "image-generation-001"
+    ]
+    
+    for model_name in candidate_models:
+        print(f"Trying Google model: '{model_name}'...")
+        try:
+            result = client.models.generate_images(
+                model=model_name,
+                prompt=prompt,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="1:1",
+                    output_mime_type="image/png"
+                )
             )
-        )
-        
-        os.makedirs("assets", exist_ok=True)
-        local_path = os.path.join("assets", file_name)
+            
+            os.makedirs("assets", exist_ok=True)
+            local_path = os.path.join("assets", file_name)
 
-        for generated_image in result.generated_images:
-            image = Image.open(io.BytesIO(generated_image.image.image_bytes))
-            image.save(local_path)
-            break
+            for generated_image in result.generated_images:
+                image = Image.open(io.BytesIO(generated_image.image.image_bytes))
+                image.save(local_path)
+                break
 
-        permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
-        print(f"Image saved locally: {local_path}")
-        return permanent_github_url
-    except Exception as e:
-        print(f"Gemini/Imagen Generation Error: {e}")
-        return None
+            permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
+            print(f"Success with {model_name}! Saved: {local_path}")
+            return permanent_github_url
+        except Exception as e:
+            print(f"Failed with {model_name}: {e}")
+            
+    return None
 
 def main():
     gc, gemini_client = get_services()
     
+    # List available models for debugging
+    try:
+        models = [m.name for m in gemini_client.models.list()]
+        image_models = [m for m in models if "image" in m or "imagen" in m]
+        print(f"Available Image Models on this API Key: {image_models if image_models else 'None listed directly'}")
+    except Exception as e:
+        print(f"Could not list models: {e}")
+
     available_sheets = gc.openall()
     if not available_sheets:
         print("No spreadsheets found!")
