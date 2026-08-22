@@ -1,4 +1,5 @@
 gspread
 google-auth
-openai
+google-genai
 requests
+pillow
