@@ -18,7 +18,9 @@ def get_services():
     creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    
+    raw_key = os.environ["OPENAI_API_KEY"].strip().replace("\n", "").replace("\r", "").replace(" ", "")
+    client = OpenAI(api_key=raw_key)
     return gc, client
 
 def generate_and_save_image(client, prompt, file_name):
