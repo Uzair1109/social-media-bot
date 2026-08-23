@@ -2,12 +2,10 @@ import datetime
 import os
 import json
 import time
-import io
+import requests
 import gspread
 from google.oauth2.service_account import Credentials
-from google import genai
-from google.genai import types
-from PIL import Image
+from openai import OpenAI
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -20,57 +18,50 @@ def get_services():
     creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     return gc, client
 
 def generate_and_save_image(client, prompt, file_name):
-    # Try all standard Imagen model names supported on Gemini API
-    candidate_models = [
-        "imagen-3.0-generate-002",
-        "imagen-3.0-fast-generate-001",
-        "image-generation-001"
-    ]
-    
-    for model_name in candidate_models:
-        print(f"Trying Google model: '{model_name}'...")
+    # Try DALL-E 3 first, fallback to DALL-E 2
+    for model_name in ["dall-e-3", "dall-e-2"]:
+        print(f"Calling OpenAI ({model_name}) for prompt: '{prompt[:70]}...'")
         try:
-            result = client.models.generate_images(
-                model=model_name,
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="1:1",
-                    output_mime_type="image/png"
+            if model_name == "dall-e-3":
+                response = client.images.generate(
+                    model=model_name,
+                    prompt=prompt,
+                    size="1024x1024",
+                    quality="standard",
+                    n=1
                 )
-            )
+            else:
+                response = client.images.generate(
+                    model=model_name,
+                    prompt=prompt[:950],
+                    size="1024x1024",
+                    n=1
+                )
+                
+            temp_url = response.data[0].url
             
             os.makedirs("assets", exist_ok=True)
             local_path = os.path.join("assets", file_name)
-
-            for generated_image in result.generated_images:
-                image = Image.open(io.BytesIO(generated_image.image.image_bytes))
-                image.save(local_path)
-                break
-
+            
+            img_data = requests.get(temp_url, timeout=60).content
+            with open(local_path, "wb") as f:
+                f.write(img_data)
+                
             permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
-            print(f"Success with {model_name}! Saved: {local_path}")
+            print(f"Saved asset locally: {local_path}")
             return permanent_github_url
         except Exception as e:
-            print(f"Failed with {model_name}: {e}")
+            print(f"Error with {model_name}: {e}")
             
     return None
 
 def main():
-    gc, gemini_client = get_services()
+    gc, openai_client = get_services()
     
-    # List available models for debugging
-    try:
-        models = [m.name for m in gemini_client.models.list()]
-        image_models = [m for m in models if "image" in m or "imagen" in m]
-        print(f"Available Image Models on this API Key: {image_models if image_models else 'None listed directly'}")
-    except Exception as e:
-        print(f"Could not list models: {e}")
-
     available_sheets = gc.openall()
     if not available_sheets:
         print("No spreadsheets found!")
@@ -146,7 +137,7 @@ def main():
         file_name = f"{timestamp}_{clean_brand}_{clean_topic}.png"
 
         print(f"Processing Tab: '{tab_name}' | Row {target_row_idx} | Topic: '{topic}'")
-        permanent_url = generate_and_save_image(gemini_client, prompt, file_name)
+        permanent_url = generate_and_save_image(openai_client, prompt, file_name)
         
         if permanent_url:
             sheet.update_cell(target_row_idx, link_col, permanent_url)
