@@ -2,6 +2,7 @@ import datetime
 import os
 import json
 import time
+import base64
 import requests
 import gspread
 from google.oauth2.service_account import Credentials
@@ -23,7 +24,6 @@ def get_services():
     return gc, client
 
 def generate_and_save_image(client, prompt, file_name):
-    # Models to try in priority order
     candidate_models = ["gpt-image-2", "gpt-image-1", "dall-e-3"]
     
     for model_name in candidate_models:
@@ -35,15 +35,22 @@ def generate_and_save_image(client, prompt, file_name):
                 n=1
             )
             
-            temp_url = response.data[0].url
-            
+            image_data = response.data[0]
             os.makedirs("assets", exist_ok=True)
             local_path = os.path.join("assets", file_name)
-            
-            img_data = requests.get(temp_url, timeout=60).content
-            with open(local_path, "wb") as f:
-                f.write(img_data)
-                
+
+            # Handle base64 output (gpt-image models)
+            if hasattr(image_data, "b64_json") and image_data.b64_json:
+                with open(local_path, "wb") as f:
+                    f.write(base64.b64decode(image_data.b64_json))
+            # Handle URL output (standard DALL-E)
+            elif hasattr(image_data, "url") and image_data.url:
+                img_data = requests.get(image_data.url, timeout=60).content
+                with open(local_path, "wb") as f:
+                    f.write(img_data)
+            else:
+                raise ValueError("No image data (url or b64_json) found in response.")
+
             permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
             print(f"Successfully generated with {model_name}! Saved: {local_path}")
             return permanent_github_url
@@ -55,15 +62,6 @@ def generate_and_save_image(client, prompt, file_name):
 def main():
     gc, openai_client = get_services()
     
-    # List available models in the account for clear visibility
-    try:
-        models_data = openai_client.models.list()
-        all_models = [m.id for m in models_data.data]
-        print(f"Available models in this project/account ({len(all_models)} total):")
-        print(", ".join(sorted(all_models)))
-    except Exception as e:
-        print(f"Could not list models: {e}")
-
     available_sheets = gc.openall()
     if not available_sheets:
         print("No spreadsheets found!")
