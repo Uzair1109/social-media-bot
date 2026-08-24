@@ -18,32 +18,23 @@ def get_services():
     creds_json = json.loads(os.environ["GOOGLE_CREDENTIALS"])
     creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
     gc = gspread.authorize(creds)
-    
     raw_key = os.environ["OPENAI_API_KEY"].strip().replace("\n", "").replace("\r", "").replace(" ", "")
     client = OpenAI(api_key=raw_key)
     return gc, client
 
 def generate_and_save_image(client, prompt, file_name):
-    # Try DALL-E 3 first, fallback to DALL-E 2
-    for model_name in ["dall-e-3", "dall-e-2"]:
+    # Models to try in priority order
+    candidate_models = ["gpt-image-2", "gpt-image-1", "dall-e-3"]
+    
+    for model_name in candidate_models:
         print(f"Calling OpenAI ({model_name}) for prompt: '{prompt[:70]}...'")
         try:
-            if model_name == "dall-e-3":
-                response = client.images.generate(
-                    model=model_name,
-                    prompt=prompt,
-                    size="1024x1024",
-                    quality="standard",
-                    n=1
-                )
-            else:
-                response = client.images.generate(
-                    model=model_name,
-                    prompt=prompt[:950],
-                    size="1024x1024",
-                    n=1
-                )
-                
+            response = client.images.generate(
+                model=model_name,
+                prompt=prompt,
+                n=1
+            )
+            
             temp_url = response.data[0].url
             
             os.makedirs("assets", exist_ok=True)
@@ -54,7 +45,7 @@ def generate_and_save_image(client, prompt, file_name):
                 f.write(img_data)
                 
             permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/{file_name}"
-            print(f"Saved asset locally: {local_path}")
+            print(f"Successfully generated with {model_name}! Saved: {local_path}")
             return permanent_github_url
         except Exception as e:
             print(f"Error with {model_name}: {e}")
@@ -64,6 +55,15 @@ def generate_and_save_image(client, prompt, file_name):
 def main():
     gc, openai_client = get_services()
     
+    # List available models in the account for clear visibility
+    try:
+        models_data = openai_client.models.list()
+        all_models = [m.id for m in models_data.data]
+        print(f"Available models in this project/account ({len(all_models)} total):")
+        print(", ".join(sorted(all_models)))
+    except Exception as e:
+        print(f"Could not list models: {e}")
+
     available_sheets = gc.openall()
     if not available_sheets:
         print("No spreadsheets found!")
