@@ -152,5 +152,21 @@ def main():
     print(f"Pipeline Completed! Total assets generated across tabs: {total_processed}")
     print("=" * 55)
 
+from http.server import BaseHTTPRequestHandler
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        try:
+            main()
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"status": "success", "message": "Pipeline run complete"}')
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(f'{{"status": "error", "message": "{str(e)}"}}'.encode())
+
 if __name__ == "__main__":
     main()
