@@ -27,7 +27,7 @@ def get_services():
 def enhance_prompt_for_video(client, raw_prompt, brand, topic):
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.0-flash",
             contents=f"""
 You are an expert AI video director. Convert this static visual direction into a single-sentence, highly cinematic 5-second video prompt with clear camera motion (e.g. slow cinematic pan, smooth dolly forward, realistic lighting shift, high frame rate, 4k).
 
@@ -49,6 +49,9 @@ def generate_and_save_video(client, prompt, file_name, brand="", topic="", aspec
     video_prompt = enhance_prompt_for_video(client, prompt, brand, topic)
     print(f"Submitting video task: '{video_prompt[:80]}...'")
     
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+
+    # Attempt 1: Google GenAI Video API / Veo
     try:
         operation = client.models.generate_videos(
             model="veo-2.0-generate-001",
@@ -60,7 +63,7 @@ def generate_and_save_video(client, prompt, file_name, brand="", topic="", aspec
             ),
         )
 
-        print("Rendering video (this usually takes 60–90 seconds)...")
+        print("Rendering video...")
         while not operation.done:
             time.sleep(10)
             operation = client.operations.get(operation)
@@ -70,15 +73,34 @@ def generate_and_save_video(client, prompt, file_name, brand="", topic="", aspec
 
         os.makedirs("assets/videos", exist_ok=True)
         local_path = os.path.join("assets/videos", file_name)
-
         client.files.download(file=generated_video.video.uri, download_filepath=local_path)
         print(f"Video saved to: {local_path}")
-
         return f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/videos/{file_name}"
 
     except Exception as e:
-        print(f"Error generating video: {e}")
-        return None
+        print(f"Standard Veo endpoint unavailable: {e}")
+
+    # Attempt 2: Flow / REST Video Endpoint fallback
+    try:
+        flow_url = "https://api.flow.google.com/v1/videos/generate"
+        headers = {"Authorization": f"Bearer {gemini_key}", "Content-Type": "application/json"}
+        payload = {"prompt": video_prompt, "aspect_ratio": aspect_ratio, "duration": 5}
+        
+        res = requests.post(flow_url, json=payload, headers=headers, timeout=30)
+        if res.status_code in [200, 201]:
+            res_data = res.json()
+            vid_url = res_data.get("video_url") or res_data.get("url")
+            if vid_url:
+                os.makedirs("assets/videos", exist_ok=True)
+                local_path = os.path.join("assets/videos", file_name)
+                with open(local_path, "wb") as f:
+                    f.write(requests.get(vid_url).content)
+                print(f"Video saved to: {local_path}")
+                return f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/videos/{file_name}"
+    except Exception as e:
+        print(f"Flow REST fallback error: {e}")
+
+    return None
 
 def main():
     gc, gemini_client = get_services()
