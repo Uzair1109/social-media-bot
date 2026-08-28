@@ -3,3 +3,4 @@ google-auth
 openai
 requests
 pillow
+google-genai
