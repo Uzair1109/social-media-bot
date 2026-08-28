@@ -24,13 +24,35 @@ def get_services():
     client = genai.Client(api_key=gemini_key)
     return gc, client
 
-def generate_and_save_video(client, prompt, file_name, aspect_ratio="9:16"):
-    print(f"Submitting video task for prompt: '{prompt[:70]}...'")
+def enhance_prompt_for_video(client, raw_prompt, brand, topic):
     try:
-        # Generate video using Veo 2 / Gemini Video model
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=f"""
+You are an expert AI video director. Convert this static visual direction into a single-sentence, highly cinematic 5-second video prompt with clear camera motion (e.g. slow cinematic pan, smooth dolly forward, realistic lighting shift, high frame rate, 4k).
+
+Brand: {brand}
+Topic: {topic}
+Original Visual: {raw_prompt}
+
+Output ONLY the enhanced video prompt:
+""",
+        )
+        enhanced = response.text.strip()
+        print(f"Motion Enhanced Prompt: {enhanced}")
+        return enhanced
+    except Exception as e:
+        print(f"Prompt enhancement fallback: {e}")
+        return f"Cinematic slow motion video, smooth camera dolly forward, 4k ultra realistic: {raw_prompt}"
+
+def generate_and_save_video(client, prompt, file_name, brand="", topic="", aspect_ratio="9:16"):
+    video_prompt = enhance_prompt_for_video(client, prompt, brand, topic)
+    print(f"Submitting video task: '{video_prompt[:80]}...'")
+    
+    try:
         operation = client.models.generate_videos(
             model="veo-2.0-generate-001",
-            prompt=prompt,
+            prompt=video_prompt,
             config=types.GenerateVideosConfig(
                 aspect_ratio=aspect_ratio,
                 number_of_videos=1,
@@ -38,7 +60,7 @@ def generate_and_save_video(client, prompt, file_name, aspect_ratio="9:16"):
             ),
         )
 
-        print("Waiting for video render to complete...")
+        print("Rendering video (this usually takes 60–90 seconds)...")
         while not operation.done:
             time.sleep(10)
             operation = client.operations.get(operation)
@@ -49,12 +71,10 @@ def generate_and_save_video(client, prompt, file_name, aspect_ratio="9:16"):
         os.makedirs("assets/videos", exist_ok=True)
         local_path = os.path.join("assets/videos", file_name)
 
-        # Download and save the generated video MP4
         client.files.download(file=generated_video.video.uri, download_filepath=local_path)
         print(f"Video saved to: {local_path}")
 
-        permanent_github_url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/videos/{file_name}"
-        return permanent_github_url
+        return f"https://raw.githubusercontent.com/{REPO_NAME}/main/assets/videos/{file_name}"
 
     except Exception as e:
         print(f"Error generating video: {e}")
@@ -110,7 +130,6 @@ def main():
         target_row_idx = None
         target_row_data = None
 
-        # Look specifically for video rows (REEL, VIDEO TOUR, VIDEO REEL, etc.)
         for idx, row in enumerate(all_values[1:], start=2):
             status_val = str(row[status_col - 1]).strip().lower() if len(row) >= status_col else ""
             format_val = str(row[format_col - 1]).strip().upper() if len(row) >= format_col else ""
@@ -136,7 +155,7 @@ def main():
         file_name = f"{timestamp}_{clean_brand}_{clean_topic}.mp4"
 
         print(f"Processing Tab: '{tab_name}' | Row {target_row_idx} | Topic: '{topic}'")
-        permanent_url = generate_and_save_video(gemini_client, prompt, file_name)
+        permanent_url = generate_and_save_video(gemini_client, prompt, file_name, brand=brand, topic=topic)
 
         if permanent_url:
             sheet.update_cell(target_row_idx, link_col, permanent_url)
