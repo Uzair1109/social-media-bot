@@ -28,7 +28,9 @@ jobs:
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python video_bot.py
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          python video_bot.py
 
       - name: Commit and Push Generated Videos
         run: |
